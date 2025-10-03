@@ -1,0 +1,21 @@
+# Dependências mínimas para transcrição de áudio
+# Apenas o essencial - sem FastAPI, Ollama, API web, etc.
+
+# Whisper para transcrição de áudio
+openai-whisper==20231117
+
+# MongoDB
+pymongo==4.6.0
+
+# Variáveis de ambiente
+python-dotenv==1.0.0
+
+# HTTP requests para download de áudio
+requests==2.31.0
+
+# Processamento de áudio (FFmpeg Python binding)
+ffmpeg-python==0.2.0
+
+# LLM Analysis
+# Dependências opcionais para melhor performance
+numpy>=1.21.0

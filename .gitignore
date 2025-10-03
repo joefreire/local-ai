@@ -1,0 +1,51 @@
+# Arquivos de áudio baixados (para evitar commitar arquivos grandes)
+downloads/*/*.*
+!downloads/*/*.json
+downloads/*/temp/
+
+# Arquivos de log
+logs/*.log
+logs/*.txt
+!logs/.gitkeep
+
+# Arquivos temporários
+temp/*
+!temp/.gitkeep
+
+# Modelos Whisper baixados (muito grandes)
+*.pt
+*.pth
+*.bin
+
+# Variáveis de ambiente
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyc
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs gerais
+*.log
+
+# Arquivos antigos/backup
+*_old.*
+*_backup.*
+*_optimized.*
