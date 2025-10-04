@@ -1,21 +1,52 @@
-# Dependências mínimas para transcrição de áudio
-# Apenas o essencial - sem FastAPI, Ollama, API web, etc.
+# Sistema de Transcrição de Áudio WhatsApp - Dependências Essenciais
 
+# === CORE DEPENDENCIES ===
+# FastAPI para API
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# === AUDIO PROCESSING ===
 # Whisper para transcrição de áudio
-openai-whisper==20231117
+openai-whisper
 
+# PyTorch (CPU version - compatível com todos os sistemas)
+# Para GPU, instale manualmente: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+torch
+torchaudio
+
+# Processamento de áudio
+ffmpeg-python
+librosa
+soundfile
+
+# === DATABASE ===
 # MongoDB
-pymongo==4.6.0
+pymongo
+motor
 
+# === HTTP REQUESTS ===
+requests
+httpx
+
+# === LLM INTEGRATION ===
+# Ollama client (para análise de conversas)
+ollama
+
+# === UTILITIES ===
 # Variáveis de ambiente
-python-dotenv==1.0.0
+python-dotenv
+pydantic
+pydantic-settings
+python-dateutil
+orjson
 
-# HTTP requests para download de áudio
-requests==2.31.0
+# === MONITORING ===
+psutil
+prometheus-client
 
-# Processamento de áudio (FFmpeg Python binding)
-ffmpeg-python==0.2.0
+# === PRODUCTION ===
+gunicorn
 
-# LLM Analysis
-# Dependências opcionais para melhor performance
-numpy>=1.21.0
+# === LOGGING ===
+structlog
+colorama

@@ -1,0 +1,34 @@
+# Configurações do Sistema de Transcrição WhatsApp
+
+# === MONGODB (Obrigatório) ===
+# URL de conexão com MongoDB (Atlas ou local)
+MONGODB_URL=mongodb+srv://usuario:senha@cluster.mongodb.net/
+MONGODB_DATABASE=dashboard_whatsapp
+
+# === WHISPER (Transcrição de Áudio) ===
+# Modelo Whisper (tiny, base, small, medium, large, large-v3)
+WHISPER_MODEL=large-v3
+# Idioma para transcrição
+WHISPER_LANGUAGE=pt
+
+# === GPU SETTINGS (RTX 4070) ===
+# Número de áudios processados simultaneamente na GPU
+GPU_BATCH_SIZE=4
+# Fração da VRAM a ser utilizada (0.1 a 1.0)
+GPU_MEMORY_FRACTION=0.8
+
+# === OLLAMA (Análise de Conversas) ===
+# URL do servidor Ollama
+OLLAMA_BASE_URL=http://localhost:11434
+# Modelo LLM para análise (llama3.1:8b, llama3.1:70b, etc.)
+OLLAMA_MODEL=llama3.1:8b
+
+# === PROCESSAMENTO ===
+# Número máximo de workers paralelos
+MAX_CONCURRENT_JOBS=8
+# Timeout para download de áudios (segundos)
+AUDIO_DOWNLOAD_TIMEOUT=60
+
+# === LOGGING ===
+# Nível de log (DEBUG, INFO, WARNING, ERROR)
+LOG_LEVEL=INFO

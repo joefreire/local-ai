@@ -16,7 +16,7 @@ class Config:
     MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "dashboard_whatsapp")
     
     # Whisper
-    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
     WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "pt")
     
     # GPU Settings
@@ -29,18 +29,19 @@ class Config:
     
     # Ollama
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     
     # Paths
     BASE_DIR = Path(__file__).parent.parent
     AUDIO_DIR = BASE_DIR / "audio_files"
     DOWNLOADS_DIR = BASE_DIR / "downloads"
+    TRANSCRIPTIONS_DIR = BASE_DIR / "transcriptions"
     TEMP_DIR = BASE_DIR / "temp"
     LOGS_DIR = BASE_DIR / "logs"
     MODELS_DIR = BASE_DIR / "models"
     
     # Create directories
-    for dir_path in [AUDIO_DIR, DOWNLOADS_DIR, TEMP_DIR, LOGS_DIR, MODELS_DIR]:
+    for dir_path in [AUDIO_DIR, DOWNLOADS_DIR, TRANSCRIPTIONS_DIR, TEMP_DIR, LOGS_DIR, MODELS_DIR]:
         dir_path.mkdir(exist_ok=True)
     
     # Logging
