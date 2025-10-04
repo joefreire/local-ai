@@ -50,3 +50,10 @@ gunicorn
 # === LOGGING ===
 structlog
 colorama
+
+# === IMAGE PROCESSING ===
+# Visão computacional e análise de imagens
+transformers>=4.40.0
+torchvision
+pillow
+accelerate

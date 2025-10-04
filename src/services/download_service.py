@@ -99,6 +99,53 @@ class DownloadService(BaseService):
             self._log_error("download de arquivo", e)
             return None
     
+    def download_media_file(self, conversation_id: str, message_id: str, url: str, media_type: str = 'audio') -> Optional[str]:
+        """Baixar arquivo de mídia (áudio ou imagem)"""
+        if media_type == 'audio':
+            return self.download_audio_file(conversation_id, message_id, url)
+        elif media_type == 'image':
+            return self.download_image_file(conversation_id, message_id, url)
+        else:
+            self.logger.error(f"Tipo de mídia não suportado: {media_type}")
+            return None
+    
+    def download_image_file(self, conversation_id: str, message_id: str, url: str) -> Optional[str]:
+        """Baixar arquivo de imagem"""
+        self._ensure_initialized()
+        self._log_operation("download de imagem", {
+            "conversation_id": conversation_id,
+            "message_id": message_id
+        })
+        
+        try:
+            # Criar diretório da conversa
+            conv_dir = Config.DOWNLOADS_DIR / conversation_id
+            conv_dir.mkdir(exist_ok=True)
+            
+            # Determinar extensão
+            extension = self._get_image_extension(url)
+            
+            # Caminho do arquivo
+            file_path = conv_dir / f"{message_id}{extension}"
+            
+            # Se já existe, retornar
+            if file_path.exists():
+                self.logger.info(f"Imagem já existe: {file_path.name}")
+                return str(file_path)
+            
+            # Download
+            if url.startswith('http'):
+                self._download_from_url(url, file_path)
+            else:
+                self._copy_local_file(url, file_path)
+            
+            self._log_success("download de imagem", {"file_path": str(file_path)})
+            return str(file_path)
+            
+        except Exception as e:
+            self._log_error("download de imagem", e)
+            return None
+    
     def _get_file_extension(self, url: str) -> str:
         """Determinar extensão do arquivo"""
         if not url:
@@ -109,6 +156,17 @@ class DownloadService(BaseService):
                 return ext
         
         return ".oga"  # Padrão
+    
+    def _get_image_extension(self, url: str) -> str:
+        """Determinar extensão da imagem"""
+        if not url:
+            return ".jpg"  # Padrão
+        
+        for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff']:
+            if ext in url.lower():
+                return ext
+        
+        return ".jpg"  # Padrão
     
     def _download_from_url(self, url: str, file_path: Path):
         """Baixar arquivo de URL"""

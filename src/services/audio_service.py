@@ -259,3 +259,188 @@ class AudioService(BaseService):
         except Exception as e:
             self.logger.error(f"❌ Erro ao carregar transcrição: {e}")
             return None
+    
+    def save_transcription_to_collection(self, conversation_id: str, message_id: str, 
+                                       contact_name: str, transcription_data: Dict) -> bool:
+        """Salvar transcrição na collection dedicada do MongoDB"""
+        self._ensure_initialized()
+        
+        try:
+            from .database_service import DatabaseService
+            
+            # Inicializar serviço de banco
+            db_service = DatabaseService()
+            
+            # Preparar dados para a collection
+            collection_data = {
+                "mensagem_id": message_id,
+                "user_id": conversation_id,  # Usando conversation_id como user_id por enquanto
+                "company_id": "default",     # Pode ser configurado depois
+                "server_name": "whatsapp",   # Pode ser configurado depois
+                "conversation_id": conversation_id,
+                "contact_name": contact_name,
+                "transcription": transcription_data,
+                "audio_duration": transcription_data.get("duration"),
+                "confidence": transcription_data.get("confidence"),
+                "whisper_model": Config.WHISPER_MODEL,
+                "device": self.device
+            }
+            
+            # Salvar na collection
+            success = db_service.save_transcription_to_collection(collection_data)
+            
+            if success:
+                self.logger.info(f"✅ Transcrição salva na collection: {message_id}")
+            else:
+                self.logger.error(f"❌ Falha ao salvar na collection: {message_id}")
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erro ao salvar transcrição na collection: {e}")
+            return False
+    
+    def process_audio_message(self, audio_msg: Dict, download_service, db_service, 
+                            show_progress=True) -> Dict:
+        """Processar uma mensagem de áudio completa (download + transcrição + salvamento)"""
+        self._ensure_initialized()
+        
+        import time
+        from pathlib import Path
+        
+        message_id = audio_msg['message_id']
+        file_url = audio_msg.get('file_url', '')
+        contact_name = audio_msg.get('contact_name', 'Desconhecido')
+        
+        result = {
+            'success': False,
+            'message_id': message_id,
+            'contact_name': contact_name,
+            'error': None,
+            'download_time': 0.0,
+            'transcription_time': 0.0,
+            'save_time': 0.0,
+            'file_size': 0,
+            'transcription': None
+        }
+        
+        try:
+            # 1. Verificar se arquivo já existe localmente
+            from ..config import Config
+            conv_dir = Config.DOWNLOADS_DIR / audio_msg['conversation_id']
+            extension = download_service._get_file_extension(audio_msg['file_url'])
+            local_file_path = conv_dir / f"{message_id}{extension}"
+            
+            if local_file_path.exists():
+                if show_progress:
+                    print(f"      📁 Arquivo já existe localmente: {local_file_path.name}")
+                audio_path = str(local_file_path)
+                download_time = 0.0
+            else:
+                if show_progress:
+                    print(f"      📥 Baixando de: {file_url[:50]}...")
+                
+                # Download
+                download_start = time.time()
+                audio_path = download_service.download_audio_file(
+                    audio_msg['conversation_id'],
+                    str(audio_msg['message_id']),
+                    audio_msg['file_url']
+                )
+                download_time = time.time() - download_start
+                
+                if not audio_path:
+                    result['error'] = f"Falha no download após {download_time:.1f}s"
+                    if show_progress:
+                        print(f"      ❌ {result['error']}")
+                    return result
+                
+                if show_progress:
+                    print(f"      ✅ Download concluído em {download_time:.1f}s")
+            
+            # Verificar tamanho do arquivo
+            file_size = Path(audio_path).stat().st_size
+            if show_progress:
+                print(f"      📊 Tamanho: {file_size/1024:.1f}KB")
+            
+            # 2. Transcrever
+            if show_progress:
+                print(f"      🎙️ Iniciando transcrição...")
+            
+            transcription_start = time.time()
+            transcription_result = self.transcribe_file(audio_path)
+            transcription_time = time.time() - transcription_start
+            
+            if not transcription_result:
+                result['error'] = f"Falha na transcrição após {transcription_time:.1f}s"
+                if show_progress:
+                    print(f"      ❌ {result['error']}")
+                return result
+            
+            # Mostrar preview da transcrição
+            text_preview = transcription_result['text'][:100] + "..." if len(transcription_result['text']) > 100 else transcription_result['text']
+            if show_progress:
+                print(f"      ✅ Transcrição concluída em {transcription_time:.1f}s")
+                print(f"      📝 Preview: {text_preview}")
+                print(f"      📊 Confiança: {transcription_result['confidence']:.2f}, Duração: {transcription_result['duration']:.1f}s")
+            
+            # 3. Salvar no MongoDB
+            if show_progress:
+                print(f"      💾 Salvando no MongoDB...")
+            
+            save_start = time.time()
+            
+            # Preparar dados da transcrição
+            transcription_data = {
+                'text': transcription_result['text'],
+                'confidence': transcription_result['confidence'],
+                'duration': transcription_result['duration'],
+                'language': transcription_result.get('language'),
+                'transcription_time': transcription_time,
+                'file_size': file_size,
+                'download_time': download_time
+            }
+            
+            success = db_service.update_audio_transcription(
+                audio_msg['conversation_id'],
+                audio_msg['contact_idx'],
+                audio_msg['message_idx'],
+                transcription_data
+            )
+            save_time = time.time() - save_start
+            
+            # 4. Salvar na collection dedicada de transcrições
+            if success:
+                collection_success = self.save_transcription_to_collection(
+                    audio_msg['conversation_id'],
+                    str(audio_msg['message_id']),
+                    audio_msg['contact_name'],
+                    transcription_data
+                )
+                if not collection_success and show_progress:
+                    print(f"      ⚠️ Aviso: Falha ao salvar na collection de transcrições")
+            
+            if success:
+                if show_progress:
+                    print(f"      ✅ Salvo no MongoDB em {save_time:.1f}s ({len(transcription_result['text'])} chars)")
+                
+                result.update({
+                    'success': True,
+                    'download_time': download_time,
+                    'transcription_time': transcription_time,
+                    'save_time': save_time,
+                    'file_size': file_size,
+                    'transcription': transcription_result
+                })
+            else:
+                result['error'] = f"Falha ao salvar no MongoDB após {save_time:.1f}s"
+                if show_progress:
+                    print(f"      ❌ {result['error']}")
+            
+            return result
+            
+        except Exception as e:
+            result['error'] = str(e)
+            if show_progress:
+                print(f"      ❌ Erro: {e}")
+            return result

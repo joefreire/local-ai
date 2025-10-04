@@ -19,10 +19,14 @@ if sys.platform == "win32":
 # Adicionar src ao path
 sys.path.append(str(Path(__file__).parent / "src"))
 
-def process_all_pending_audios(limit=None, dry_run=False):
+def process_all_pending_audios(limit=None, dry_run=False, force=False):
     """Processar todos os áudios pendentes do MongoDB"""
     print("🎙️ Processador em Lote - Todos os Áudios Pendentes")
     print("=" * 60)
+    
+    if force:
+        print("⚡ MODO FORCE ativado - reprocessando TODOS os áudios")
+        print("⚠️  Ignorando status de processamento anterior")
     
     try:
         from src.services.database_service import DatabaseService
@@ -44,8 +48,21 @@ def process_all_pending_audios(limit=None, dry_run=False):
         print(f"   ⏳ Conversas pendentes: {stats.get('pending_conversations', 0)}")
         
         # Buscar conversas pendentes
-        print("\n🔍 Buscando conversas com áudios pendentes...")
-        pending_conversations = db_service.get_conversations_with_pending_audios(limit=limit or 100)
+        if force:
+            print("\n🔍 Buscando TODAS as conversas com áudios (modo force)...")
+            # Buscar todas as conversas com áudios, ignorando status
+            query = {
+                "$or": [
+                    {"audio_messages": {"$gt": 0}},
+                    {"media_messages": {"$gt": 0}},
+                    {"contacts.messages.type": "audio"},
+                    {"contacts.messages.media_type": "audio"}
+                ]
+            }
+            pending_conversations = list(db_service.db.diarios.find(query).limit(limit or 100))
+        else:
+            print("\n🔍 Buscando conversas com áudios pendentes...")
+            pending_conversations = db_service.get_conversations_with_pending_audios(limit=limit or 100)
         
         if not pending_conversations:
             print("✅ Nenhum áudio pendente encontrado!")
@@ -63,10 +80,16 @@ def process_all_pending_audios(limit=None, dry_run=False):
                 conv_id = conversation['_id']
                 user_name = conversation.get('user_name', 'Desconhecido')
                 
-                # Buscar áudios pendentes desta conversa
-                pending_audios = db_service.get_pending_audios_for_conversation(str(conv_id))
+                # Converter ObjectId para string
+                conv_id_str = str(conv_id)
                 
-                print(f"{i:2d}. {conv_id[:8]} - {user_name[:30]:<30} ({len(pending_audios)} áudios)")
+                # Buscar áudios pendentes desta conversa
+                if force:
+                    pending_audios = db_service.get_all_audios_for_conversation(conv_id_str)
+                else:
+                    pending_audios = db_service.get_pending_audios_for_conversation(conv_id_str)
+                
+                print(f"{i:2d}. {conv_id_str[:8]} - {user_name[:30]:<30} ({len(pending_audios)} áudios)")
                 total_pending_audios += len(pending_audios)
             
             print("-" * 60)
@@ -94,18 +117,31 @@ def process_all_pending_audios(limit=None, dry_run=False):
             conv_id = conversation['_id']
             user_name = conversation.get('user_name', 'Desconhecido')
             
-            print(f"\n📁 [{i}/{len(pending_conversations)}] Processando: {conv_id[:8]} - {user_name}")
+            # Converter ObjectId para string se necessário
+            conv_id_str = str(conv_id)
+            print(f"\n📁 [{i}/{len(pending_conversations)}] Processando: {conv_id_str[:8]} - {user_name}")
             print("-" * 50)
             
             try:
-                # Buscar áudios pendentes desta conversa
-                pending_audios = db_service.get_pending_audios_for_conversation(str(conv_id))
+                # Buscar áudios desta conversa
+                if force:
+                    # No modo force, buscar TODOS os áudios, não apenas pendentes
+                    pending_audios = db_service.get_all_audios_for_conversation(conv_id_str)
+                else:
+                    # Modo normal, buscar apenas áudios pendentes
+                    pending_audios = db_service.get_pending_audios_for_conversation(conv_id_str)
                 
                 if not pending_audios:
-                    print("   ✅ Nenhum áudio pendente nesta conversa")
+                    if force:
+                        print("   ✅ Nenhum áudio encontrado nesta conversa")
+                    else:
+                        print("   ✅ Nenhum áudio pendente nesta conversa")
                     continue
                 
-                print(f"   🎵 Encontrados {len(pending_audios)} áudios pendentes")
+                if force:
+                    print(f"   🎵 Encontrados {len(pending_audios)} áudios (reprocessando todos)")
+                else:
+                    print(f"   🎵 Encontrados {len(pending_audios)} áudios pendentes")
                 
                 # Processar cada áudio
                 conv_successful = 0
@@ -113,80 +149,21 @@ def process_all_pending_audios(limit=None, dry_run=False):
                 
                 for j, audio_msg in enumerate(pending_audios, 1):
                     message_id = audio_msg['message_id']
-                    file_url = audio_msg.get('file_url', '')
                     contact_name = audio_msg.get('contact_name', 'Desconhecido')
                     
                     print(f"   [{j}/{len(pending_audios)}] 🎵 Áudio: {message_id[:8]} - {contact_name[:20]}")
-                    print(f"      📥 Baixando de: {file_url[:50]}...")
                     
-                    try:
-                        # 1. Baixar arquivo
-                        download_start = time.time()
-                        audio_path = download_service.download_audio_file(
-                            audio_msg['conversation_id'],
-                            str(audio_msg['message_id']),
-                            audio_msg['file_url']
-                        )
-                        download_time = time.time() - download_start
-                        
-                        if not audio_path:
-                            print(f"      ❌ Falha no download após {download_time:.1f}s")
-                            conv_failed += 1
-                            continue
-                        
-                        # Verificar tamanho do arquivo
-                        file_size = Path(audio_path).stat().st_size
-                        print(f"      ✅ Download concluído ({file_size/1024:.1f}KB em {download_time:.1f}s)")
-                        
-                        # 2. Transcrever
-                        print(f"      🎙️ Iniciando transcrição...")
-                        transcription_start = time.time()
-                        result = audio_service.transcribe_file(audio_path)
-                        transcription_time = time.time() - transcription_start
-                        
-                        if not result:
-                            print(f"      ❌ Falha na transcrição após {transcription_time:.1f}s")
-                            conv_failed += 1
-                            continue
-                        
-                        # Mostrar preview da transcrição
-                        text_preview = result['text'][:100] + "..." if len(result['text']) > 100 else result['text']
-                        print(f"      ✅ Transcrição concluída em {transcription_time:.1f}s")
-                        print(f"      📝 Preview: {text_preview}")
-                        print(f"      📊 Confiança: {result['confidence']:.2f}, Duração: {result['duration']:.1f}s")
-                        
-                        # 3. Salvar no MongoDB
-                        print(f"      💾 Salvando no MongoDB...")
-                        save_start = time.time()
-                        
-                        # Preparar dados da transcrição
-                        transcription_data = {
-                            'text': result['text'],
-                            'confidence': result['confidence'],
-                            'duration': result['duration'],
-                            'language': result.get('language'),
-                            'transcription_time': transcription_time,
-                            'file_size': file_size,
-                            'download_time': download_time
-                        }
-                        
-                        success = db_service.update_audio_transcription(
-                            audio_msg['conversation_id'],
-                            audio_msg['contact_idx'],
-                            audio_msg['message_idx'],
-                            transcription_data
-                        )
-                        save_time = time.time() - save_start
-                        
-                        if success:
-                            print(f"      ✅ Salvo no MongoDB em {save_time:.1f}s ({len(result['text'])} chars)")
-                            conv_successful += 1
-                        else:
-                            print(f"      ❌ Falha ao salvar no MongoDB após {save_time:.1f}s")
-                            conv_failed += 1
-                        
-                    except Exception as e:
-                        print(f"      ❌ Erro: {e}")
+                    # Processar áudio usando o método do AudioService
+                    result = audio_service.process_audio_message(
+                        audio_msg, 
+                        download_service, 
+                        db_service, 
+                        show_progress=True
+                    )
+                    
+                    if result['success']:
+                        conv_successful += 1
+                    else:
                         conv_failed += 1
                 
                 print(f"   📊 Resultado: {conv_successful} sucessos, {conv_failed} falhas")
@@ -229,11 +206,15 @@ def main():
     parser = argparse.ArgumentParser(description="Processar todos os áudios pendentes")
     parser.add_argument("--limit", type=int, help="Limite de conversas para processar")
     parser.add_argument("--dry-run", action="store_true", help="Apenas listar áudios pendentes")
+    parser.add_argument("--force", action="store_true", help="Reprocessar TODOS os áudios, ignorando status")
     
     args = parser.parse_args()
     
     if args.dry_run:
         print("🧪 MODO DRY-RUN ativado - nenhum processamento será feito")
+    
+    if args.force:
+        print("⚡ MODO FORCE ativado - reprocessando TODOS os áudios")
     
     if args.limit:
         print(f"📊 Limite de conversas: {args.limit}")
@@ -242,7 +223,8 @@ def main():
     
     success = process_all_pending_audios(
         limit=args.limit,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        force=args.force
     )
     
     if success:
