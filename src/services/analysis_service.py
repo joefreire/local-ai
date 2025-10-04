@@ -52,20 +52,20 @@ class LlamaService(BaseService):
             if not conversation_text.strip():
                 return {'error': 'Conversa sem conteúdo para análise'}
             
-            # Análise completa
+            # Análise completa com prompts
             analysis = {
-                'summary': self._generate_summary(conversation_text),
-                'topics': self._extract_topics(conversation_text),
-                'sentiment': self._analyze_sentiment(conversation_text),
-                'insights': self._generate_insights(conversation_text),
+                'summary': self._generate_summary_with_prompt(conversation_text),
+                'topics': self._extract_topics_with_prompt(conversation_text),
+                'sentiment': self._analyze_sentiment_with_prompt(conversation_text),
+                'insights': self._generate_insights_with_prompt(conversation_text),
                 'conversation_stats': self._calculate_stats(conversation_data),
                 'analyzed_at': datetime.now().isoformat()
             }
             
             self._log_success("análise de conversa", {
                 "conversation_id": conversation_data.get('conversation_id'),
-                "topics_count": len(analysis['topics']),
-                "insights_count": len(analysis['insights'])
+                "topics_count": len(analysis['topics']['result']) if isinstance(analysis['topics'], dict) else len(analysis['topics']),
+                "insights_count": len(analysis['insights']['result']) if isinstance(analysis['insights'], dict) else len(analysis['insights'])
             })
             
             return analysis
@@ -126,6 +126,40 @@ Resumo:
             self.logger.error(f"Erro ao gerar resumo: {e}")
             return "Erro ao gerar resumo"
     
+    def _generate_summary_with_prompt(self, conversation_text: str) -> Dict:
+        """Gerar resumo da conversa com prompt"""
+        prompt = f"""
+Analise esta conversa do WhatsApp e gere um resumo conciso em português brasileiro.
+
+Conversa:
+{conversation_text}
+
+Instruções:
+- Resuma os principais pontos da conversa
+- Identifique o assunto principal
+- Destaque informações importantes
+- Máximo 200 palavras
+- Seja objetivo e claro
+
+Resumo:
+"""
+        
+        try:
+            response = self._call_ollama(prompt)
+            return {
+                "result": response.strip(),
+                "prompt": prompt,
+                "success": True
+            }
+        except Exception as e:
+            self.logger.error(f"Erro ao gerar resumo: {e}")
+            return {
+                "result": "Erro ao gerar resumo",
+                "prompt": prompt,
+                "success": False,
+                "error": str(e)
+            }
+    
     def _extract_topics(self, conversation_text: str) -> List[str]:
         """Extrair tópicos principais"""
         prompt = f"""
@@ -154,6 +188,46 @@ Tópicos (formato JSON):
         except Exception as e:
             self.logger.error(f"Erro ao extrair tópicos: {e}")
             return ["Erro ao extrair tópicos"]
+    
+    def _extract_topics_with_prompt(self, conversation_text: str) -> Dict:
+        """Extrair tópicos principais com prompt"""
+        prompt = f"""
+Analise esta conversa do WhatsApp e identifique os principais tópicos discutidos.
+
+Conversa:
+{conversation_text}
+
+Instruções:
+- Identifique 3-5 tópicos principais
+- Use palavras-chave ou frases curtas
+- Responda em formato de lista JSON
+- Exemplo: ["trabalho", "família", "finanças", "saúde"]
+
+Tópicos (formato JSON):
+"""
+        
+        try:
+            response = self._call_ollama(prompt)
+            try:
+                topics = json.loads(response.strip())
+                result = topics if isinstance(topics, list) else [response.strip()]
+            except json.JSONDecodeError:
+                topics = [line.strip() for line in response.strip().split('\n') if line.strip()]
+                result = topics[:5]
+            
+            return {
+                "result": result,
+                "prompt": prompt,
+                "success": True
+            }
+        except Exception as e:
+            self.logger.error(f"Erro ao extrair tópicos: {e}")
+            return {
+                "result": ["Erro ao extrair tópicos"],
+                "prompt": prompt,
+                "success": False,
+                "error": str(e)
+            }
     
     def _analyze_sentiment(self, conversation_text: str) -> Dict[str, Any]:
         """Analisar sentimento da conversa"""
@@ -196,6 +270,58 @@ Resposta (formato JSON):
                 "description": "Erro na análise"
             }
     
+    def _analyze_sentiment_with_prompt(self, conversation_text: str) -> Dict:
+        """Analisar sentimento da conversa com prompt"""
+        prompt = f"""
+Analise o sentimento geral desta conversa do WhatsApp.
+
+Conversa:
+{conversation_text}
+
+Instruções:
+- Analise o tom geral da conversa
+- Identifique emoções predominantes
+- Responda em formato JSON com:
+  - "overall_sentiment": "positivo", "negativo" ou "neutro"
+  - "confidence": valor de 0 a 1
+  - "emotions": lista de emoções detectadas
+  - "description": breve descrição do sentimento
+
+Resposta (formato JSON):
+"""
+        
+        try:
+            response = self._call_ollama(prompt)
+            try:
+                sentiment_data = json.loads(response.strip())
+                result = sentiment_data
+            except json.JSONDecodeError:
+                result = {
+                    "overall_sentiment": "neutro",
+                    "confidence": 0.5,
+                    "emotions": ["neutro"],
+                    "description": response.strip()
+                }
+            
+            return {
+                "result": result,
+                "prompt": prompt,
+                "success": True
+            }
+        except Exception as e:
+            self.logger.error(f"Erro ao analisar sentimento: {e}")
+            return {
+                "result": {
+                    "overall_sentiment": "neutro",
+                    "confidence": 0.0,
+                    "emotions": ["erro"],
+                    "description": "Erro na análise"
+                },
+                "prompt": prompt,
+                "success": False,
+                "error": str(e)
+            }
+    
     def _generate_insights(self, conversation_text: str) -> List[str]:
         """Gerar insights sobre a conversa"""
         prompt = f"""
@@ -221,6 +347,43 @@ Insights:
         except Exception as e:
             self.logger.error(f"Erro ao gerar insights: {e}")
             return ["Erro ao gerar insights"]
+    
+    def _generate_insights_with_prompt(self, conversation_text: str) -> Dict:
+        """Gerar insights sobre a conversa com prompt"""
+        prompt = f"""
+Analise esta conversa do WhatsApp e gere insights interessantes.
+
+Conversa:
+{conversation_text}
+
+Instruções:
+- Identifique padrões comportamentais
+- Destaque informações importantes
+- Gere 2-3 insights relevantes
+- Seja específico e útil
+- Responda em formato de lista
+
+Insights:
+"""
+        
+        try:
+            response = self._call_ollama(prompt)
+            insights = [line.strip() for line in response.strip().split('\n') if line.strip()]
+            result = insights[:3]
+            
+            return {
+                "result": result,
+                "prompt": prompt,
+                "success": True
+            }
+        except Exception as e:
+            self.logger.error(f"Erro ao gerar insights: {e}")
+            return {
+                "result": ["Erro ao gerar insights"],
+                "prompt": prompt,
+                "success": False,
+                "error": str(e)
+            }
     
     def _calculate_stats(self, conversation_data: Dict) -> Dict[str, Any]:
         """Calcular estatísticas da conversa"""
