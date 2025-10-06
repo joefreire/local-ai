@@ -39,7 +39,15 @@ class DatabaseService(BaseService):
             self.db.transcriptions.create_index("created_at")
             self.db.transcriptions.create_index([("user_id", 1), ("created_at", -1)])
             
-            self.logger.info("✅ Índices criados para collection de transcrições")
+            # Índices para collection de análises de imagem
+            self.db.image_analyses.create_index("mensagem_id", unique=True)
+            self.db.image_analyses.create_index("user_id")
+            self.db.image_analyses.create_index("company_id")
+            self.db.image_analyses.create_index("server_name")
+            self.db.image_analyses.create_index("created_at")
+            self.db.image_analyses.create_index([("user_id", 1), ("created_at", -1)])
+            
+            self.logger.info("✅ Índices criados para collections de transcrições e análises de imagem")
         except Exception as e:
             self.logger.warning(f"⚠️ Erro ao criar índices: {e}")
     
@@ -158,7 +166,9 @@ class DatabaseService(BaseService):
                 messages = contact.get('messages', [])
                 
                 for msg_idx, message in enumerate(messages):
-                    if self._is_audio_message(message) and not self._has_transcription(message):
+                    if (self._is_audio_message(message) and 
+                        not self._has_transcription(message) and 
+                        not self._is_download_failed(message)):
                         audio_info = self._create_audio_info(
                             conversation_id, contact_idx, msg_idx, 
                             message, contact
@@ -234,6 +244,38 @@ class DatabaseService(BaseService):
             self._log_error("extração de todos os áudios", e)
             return []
     
+    def mark_audio_download_failed(self, conversation_id: str, contact_idx: int, 
+                                 message_idx: int, error_message: str) -> bool:
+        """Marcar áudio como falha de download"""
+        self._ensure_initialized()
+        self._log_operation("marcar download falhado", {
+            "conversation_id": conversation_id,
+            "contact_idx": contact_idx,
+            "message_idx": message_idx
+        })
+        
+        try:
+            # Atualizar mensagem com status de falha
+            result = self.db.diarios.update_one(
+                {"_id": ObjectId(conversation_id)},
+                {
+                    "$set": {
+                        f"contacts.{contact_idx}.messages.{message_idx}.download_status": "failed",
+                        f"contacts.{contact_idx}.messages.{message_idx}.download_error": error_message,
+                        f"contacts.{contact_idx}.messages.{message_idx}.download_failed_at": datetime.now(),
+                        f"contacts.{contact_idx}.messages.{message_idx}.404_error": "404" in error_message
+                    }
+                }
+            )
+            
+            success = result.modified_count > 0
+            self._log_success("marcar download falhado", {"modified": result.modified_count})
+            return success
+            
+        except Exception as e:
+            self._log_error("marcar download falhado", e)
+            return False
+    
     def get_all_images_for_conversation(self, conversation_id: str) -> List[Dict]:
         """Buscar TODAS as imagens de uma conversa (incluindo já analisadas)"""
         self._ensure_initialized()
@@ -291,6 +333,15 @@ class DatabaseService(BaseService):
             message.get('audio_transcription') or
             message.get('transcription') or 
             message.get('transcription_text')
+        )
+    
+    def _is_download_failed(self, message: Dict) -> bool:
+        """Verificar se download falhou (404 ou erro)"""
+        return bool(
+            message.get('download_status') == 'failed' or
+            message.get('download_error') or
+            message.get('file_not_found') or
+            message.get('404_error')
         )
     
     def _has_image_analysis(self, message: Dict) -> bool:
@@ -420,6 +471,90 @@ class DatabaseService(BaseService):
         except Exception as e:
             self._log_error("atualização de análise de imagem", e)
             return False
+    
+    def save_image_analysis_to_collection(self, analysis_data: Dict) -> bool:
+        """Salvar análise de imagem na collection dedicada"""
+        self._ensure_initialized()
+        
+        try:
+            # Preparar documento para a collection de análises de imagem
+            analysis_doc = {
+                "mensagem_id": analysis_data.get("mensagem_id"),
+                "user_id": analysis_data.get("user_id"),
+                "company_id": analysis_data.get("company_id"),
+                "server_name": analysis_data.get("server_name"),
+                "conversation_id": analysis_data.get("conversation_id"),
+                "contact_name": analysis_data.get("contact_name"),
+                "image_analysis": analysis_data.get("image_analysis", {}),
+                "image_description": analysis_data.get("image_description"),
+                "model": analysis_data.get("model"),
+                "device": analysis_data.get("device"),
+                "file_size": analysis_data.get("file_size"),
+                "generation_time": analysis_data.get("generation_time"),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            # Inserir ou atualizar análise
+            result = self.db.image_analyses.update_one(
+                {"mensagem_id": analysis_doc["mensagem_id"]},
+                {"$set": analysis_doc},
+                upsert=True
+            )
+            
+            self._log_success("salvamento na collection de análises de imagem", {
+                "mensagem_id": analysis_doc["mensagem_id"],
+                "modified": result.modified_count,
+                "upserted": result.upserted_id is not None
+            })
+            
+            return True
+            
+        except Exception as e:
+            self._log_error("salvamento na collection de análises de imagem", e)
+            return False
+    
+    def get_image_analysis_stats(self) -> Dict:
+        """Obter estatísticas das análises de imagem"""
+        self._ensure_initialized()
+        
+        try:
+            total = self.db.image_analyses.count_documents({})
+            
+            # Estatísticas por usuário
+            user_stats = list(self.db.image_analyses.aggregate([
+                {"$group": {
+                    "_id": "$user_id",
+                    "count": {"$sum": 1},
+                    "avg_generation_time": {"$avg": "$generation_time"}
+                }},
+                {"$sort": {"count": -1}},
+                {"$limit": 10}
+            ]))
+            
+            # Estatísticas por empresa
+            company_stats = list(self.db.image_analyses.aggregate([
+                {"$group": {
+                    "_id": "$company_id",
+                    "count": {"$sum": 1}
+                }},
+                {"$sort": {"count": -1}},
+                {"$limit": 10}
+            ]))
+            
+            return {
+                "total_analyses": total,
+                "top_users": user_stats,
+                "top_companies": company_stats
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao obter estatísticas de análises: {e}")
+            return {
+                "total_analyses": 0,
+                "top_users": [],
+                "top_companies": []
+            }
 
     def _check_and_update_conversation_status(self, conversation_id: str):
         """Verificar se todos os áudios da conversa foram processados e atualizar status"""
@@ -628,21 +763,24 @@ class DatabaseService(BaseService):
                 }
                 
                 for message in contact.get('messages', []):
-                    # Incluir texto da mensagem ou transcrição
-                    message_text = (
-                        message.get('audio_transcription') or 
-                        message.get('body', '') or 
-                        message.get('text', '')
-                    )
+                    # Incluir texto da mensagem, transcrição de áudio ou análise de imagem
+                    message_text = self._get_message_content(message)
                     
                     if message_text:
+                        message_type = self._get_message_type(message)
                         contact_data['messages'].append({
                             'timestamp': message.get('created_at'),
                             'text': message_text,
-                            'message_type': 'audio' if self._is_audio_message(message) else 'text'
+                            'message_type': message_type,
+                            'original_type': message.get('type', message.get('media_type', 'text')),
+                            'has_transcription': bool(message.get('audio_transcription')),
+                            'has_image_analysis': bool(message.get('image_analysis'))
                         })
                 
                 conversation_text['contacts'].append(contact_data)
+            
+            # Adicionar histórico de mensagens dos últimos 7 dias
+            conversation_text['historical_context'] = self._get_historical_messages(conversation_id)
             
             return conversation_text
             
@@ -650,8 +788,104 @@ class DatabaseService(BaseService):
             self.logger.error(f"Erro ao obter texto da conversa: {e}")
             return {}
     
+    def _get_message_content(self, message: Dict) -> str:
+        """Obter conteúdo da mensagem priorizando transcrições e análises"""
+        # Prioridade: transcrição de áudio > análise de imagem > texto original
+        if message.get('audio_transcription'):
+            return f"[ÁUDIO TRANSCRITO] {message.get('audio_transcription')}"
+        
+        if message.get('image_analysis'):
+            analysis = message.get('image_analysis', {})
+            if isinstance(analysis, dict):
+                image_text = analysis.get('description', analysis.get('text', ''))
+                if image_text:
+                    return f"[IMAGEM ANALISADA] {image_text}"
+        
+        # Texto original da mensagem
+        return message.get('body', '') or message.get('text', '')
+    
+    def _get_message_type(self, message: Dict) -> str:
+        """Determinar tipo da mensagem"""
+        if message.get('audio_transcription'):
+            return 'audio_transcribed'
+        if message.get('image_analysis'):
+            return 'image_analyzed'
+        if self._is_audio_message(message):
+            return 'audio'
+        if self._is_image_message(message):
+            return 'image'
+        return 'text'
+    
+    def _is_image_message(self, message: Dict) -> bool:
+        """Verificar se mensagem é imagem"""
+        return (
+            message.get('media_type') == 'image' or
+            message.get('is_image', False) or
+            message.get('type') == 'image' or
+            str(message.get('media_url', '')).endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')) or
+            str(message.get('direct_media_url', '')).endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'))
+        )
+    
+    def _get_historical_messages(self, conversation_id: str, days: int = 7) -> List[Dict]:
+        """Buscar mensagens históricas dos últimos dias"""
+        try:
+            from datetime import datetime, timedelta
+            
+            # Calcular data limite
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            # Buscar conversas dos últimos 7 dias do mesmo usuário
+            current_conversation = self.db.diarios.find_one({"_id": ObjectId(conversation_id)})
+            if not current_conversation:
+                return []
+            
+            user_name = current_conversation.get('user_name')
+            if not user_name:
+                return []
+            
+            # Buscar conversas do mesmo usuário nos últimos 7 dias
+            historical_conversations = self.db.diarios.find({
+                'user_name': user_name,
+                'created_at': {
+                    '$gte': start_date,
+                    '$lt': end_date
+                },
+                '_id': {'$ne': ObjectId(conversation_id)}  # Excluir conversa atual
+            }).sort('created_at', -1).limit(5)  # Máximo 5 conversas recentes
+            
+            historical_messages = []
+            
+            for conv in historical_conversations:
+                conv_date = conv.get('created_at', conv.get('date_formatted', ''))
+                
+                # Extrair mensagens de cada contato
+                for contact in conv.get('contacts', []):
+                    contact_name = contact.get('contact_name', 'Desconhecido')
+                    
+                    for message in contact.get('messages', []):
+                        message_content = self._get_message_content(message)
+                        
+                        if message_content:
+                            historical_messages.append({
+                                'conversation_id': str(conv['_id']),
+                                'conversation_date': conv_date,
+                                'contact_name': contact_name,
+                                'timestamp': message.get('created_at'),
+                                'text': message_content,
+                                'message_type': self._get_message_type(message)
+                            })
+            
+            # Ordenar por timestamp e limitar
+            historical_messages.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            return historical_messages[:50]  # Máximo 50 mensagens históricas
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar mensagens históricas: {e}")
+            return []
+    
     def save_conversation_analysis(self, conversation_id: str, analysis: Dict):
-        """Salvar análise da conversa no MongoDB"""
+        """Salvar análise da conversa no MongoDB (DEPRECATED - usar save_diary_analysis_v2)"""
         try:
             analysis_data = {
                 'conversation_analysis': analysis,
@@ -671,6 +905,120 @@ class DatabaseService(BaseService):
         except Exception as e:
             self.logger.error(f"Erro ao salvar análise: {e}")
             return False
+    
+    def save_diary_analysis_v2(self, diary_id: str, analysis: Dict) -> bool:
+        """Salvar análise do diário no novo formato (contact_analyses + diary_summary)"""
+        self._ensure_initialized()
+        try:
+            # Preparar dados para o novo schema
+            analysis_data = {
+                'contact_analyses': analysis.get('contact_analyses', []),
+                'diary_summary': analysis.get('diary_summary', {}),
+                'analysis_stats': analysis.get('analysis_stats', {}),
+                'analyzed_at': datetime.now(),
+                'updated_at': datetime.now(),
+                'analysis_version': 'v2'
+            }
+            
+            result = self.db.diarios.update_one(
+                {"_id": ObjectId(diary_id)},
+                {"$set": analysis_data}
+            )
+            
+            success = result.modified_count > 0
+            self.logger.info(f"Análise v2 salva para diário {diary_id}: {success}")
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao salvar análise v2: {e}")
+            return False
+    
+    def get_diary_text_for_analysis_v2(self, diary_id: str) -> Optional[Dict]:
+        """Buscar dados do diário para análise v2 (com contexto histórico)"""
+        self._ensure_initialized()
+        try:
+            # Buscar diário
+            diary = self.db.diarios.find_one({"_id": ObjectId(diary_id)})
+            if not diary:
+                return None
+            
+            # Adicionar contexto histórico
+            historical_context = self._get_historical_messages(diary_id, days=7)
+            
+            # Preparar dados para análise
+            analysis_data = {
+                'diary_id': str(diary['_id']),
+                'user_name': diary.get('user_name'),
+                'company_name': diary.get('company_name'),
+                'date': diary.get('date'),
+                'date_formatted': diary.get('date_formatted'),
+                'contacts': diary.get('contacts', []),
+                'historical_context': historical_context
+            }
+            
+            return analysis_data
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar dados do diário: {e}")
+            return None
+    
+    def get_diaries_without_analysis_v2(self, limit: int = 100) -> List[Dict]:
+        """Buscar diários sem análise v2"""
+        self._ensure_initialized()
+        try:
+            query = {
+                "$or": [
+                    {"contact_analyses": {"$exists": False}},
+                    {"analysis_version": {"$ne": "v2"}},
+                    {"contact_analyses": {"$size": 0}}
+                ]
+            }
+            
+            cursor = self.db.diarios.find(query).limit(limit)
+            diaries = []
+            
+            for diary in cursor:
+                diary["_id"] = str(diary["_id"])
+                diaries.append(diary)
+            
+            return diaries
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar diários sem análise v2: {e}")
+            return []
+    
+    def get_diary_analysis_stats_v2(self) -> Dict:
+        """Obter estatísticas das análises v2"""
+        self._ensure_initialized()
+        try:
+            total_diaries = self.db.diarios.count_documents({})
+            analyzed_diaries = self.db.diaries.count_documents({
+                "contact_analyses": {"$exists": True, "$ne": []},
+                "analysis_version": "v2"
+            })
+            
+            # Estatísticas por empresa
+            company_stats = list(self.db.diarios.aggregate([
+                {"$match": {"analysis_version": "v2"}},
+                {"$group": {
+                    "_id": "$company_name",
+                    "analyzed_diaries": {"$sum": 1},
+                    "total_contacts": {"$sum": {"$size": {"$ifNull": ["$contact_analyses", []]}}}
+                }},
+                {"$sort": {"analyzed_diaries": -1}}
+            ]))
+            
+            return {
+                'total_diaries': total_diaries,
+                'analyzed_diaries': analyzed_diaries,
+                'pending_diaries': total_diaries - analyzed_diaries,
+                'analysis_rate': (analyzed_diaries / total_diaries * 100) if total_diaries > 0 else 0,
+                'company_stats': company_stats
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Erro ao obter estatísticas v2: {e}")
+            return {}
     
     def save_transcription_to_collection(self, transcription_data: Dict) -> bool:
         """Salvar transcrição na collection dedicada"""

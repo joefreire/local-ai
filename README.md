@@ -26,11 +26,13 @@ Sistema Laravel → MongoDB → Sistema Python → Análise Completa
 - **Batch processing** para eficiência máxima
 - **Controle de status** no MongoDB
 
-### 🧠 Análise de Conversas
-- **Resumo automático** das conversas
-- **Extração de tópicos** principais
-- **Análise de sentimentos** 
-- **Insights inteligentes** sobre padrões
+### 🧠 Análise de Conversas 
+- **Análise por contato individual** - Cada conversa é analisada separadamente
+- **Resumo global do diário** - Feedback consolidado baseado em todas as conversas
+- **Extração de tópicos** principais por contato
+- **Análise de sentimentos** individual e global
+- **Insights inteligentes** sobre padrões comportamentais
+- **Contexto histórico** - Considera conversas dos últimos 7 dias
 
 ### 📊 Organização e Controle
 - **Organização**: Arquivos por diário e mensagem

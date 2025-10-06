@@ -213,6 +213,32 @@ python analyze_diary.py 68dfed5432af85dff60ffbc4
 # 🎉 Análise concluída com sucesso!
 ```
 
+## Funcionalidades Avançadas
+
+### 🎯 **Análise com Contexto Completo**
+
+O sistema agora inclui:
+
+- 📝 **Transcrições de Áudio**: Mensagens de áudio são automaticamente transcritas e incluídas como texto
+- 🖼️ **Análise de Imagens**: Imagens são analisadas e descrições incluídas no contexto
+- 📅 **Contexto Histórico**: Mensagens dos últimos 7 dias do mesmo usuário para contexto
+- 🔍 **Prompts Completos**: Todos os prompts enviados para a Llama3 são incluídos no JSON
+
+### 📊 **Tipos de Mensagem Suportados**
+
+- **text**: Mensagens de texto normais
+- **audio_transcribed**: Áudios com transcrição disponível
+- **image_analyzed**: Imagens com análise disponível
+- **audio**: Áudios sem transcrição (marcados como [ÁUDIO])
+- **image**: Imagens sem análise (marcadas como [IMAGEM])
+
+### 🕒 **Contexto Histórico**
+
+- Busca automaticamente conversas dos últimos 7 dias do mesmo usuário
+- Máximo de 5 conversas históricas e 50 mensagens
+- Incluído no prompt como "CONTEXTO HISTÓRICO"
+- Ajuda a entender padrões comportamentais e evolução da conversa
+
 ## Prompts Incluídos
 
 Cada análise agora inclui **todos os prompts completos** que foram enviados para a Llama3:

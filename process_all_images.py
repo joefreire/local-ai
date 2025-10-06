@@ -237,10 +237,8 @@ def process_image_message(image_msg, download_service, db_service, image_service
             print(f"      🖼️ Iniciando análise...")
         analysis_start = time.time()
         
-        # Prompt padrão para análise
-        prompt = "Descreva esta imagem em detalhes em português, incluindo objetos, pessoas, cenário e atividades visíveis."
-        
-        result = image_service.analyze_image(image_path, prompt)
+        # Usar sistema de múltiplos prompts automático
+        result = image_service.analyze_image(image_path)
         analysis_time = time.time() - analysis_start
         
         if not result:
@@ -254,13 +252,54 @@ def process_image_message(image_msg, download_service, db_service, image_service
             print(f"      ✅ Análise concluída em {analysis_time:.1f}s")
             print(f"      📝 Preview: {description_preview}")
             print(f"      📊 Modelo: {result['model']}")
+            if 'prompt_name' in result:
+                print(f"      🎯 Prompt usado: {result['prompt_name']}")
         
-        # 3. Salvar no MongoDB
+        # 3. Salvar JSON (mesmo padrão das transcrições)
         if show_progress:
-            print(f"      💾 Salvando no MongoDB...")
-        save_start = time.time()
+            print(f"      💾 Salvando JSON...")
+        json_start = time.time()
         
-        # Preparar dados da análise
+        # Preparar dados para JSON
+        json_data = {
+            "conversation_id": image_msg['conversation_id'],
+            "message_id": str(image_msg['message_id']),
+            "image_analysis": {
+                "description": result['description'],
+                "prompt_used": result['prompt_used'],
+                "generation_time": result['generation_time'],
+                "model": result['model'],
+                "analysis_time": analysis_time,
+                "file_size": file_size,
+                "download_time": download_time
+            },
+            "created_at": datetime.now().isoformat(),
+            "model": result['model'],
+            "device": "ollama"
+        }
+        
+        # Salvar JSON usando o método do ImageService
+        json_path = image_service.save_analysis_to_json(
+            image_msg['conversation_id'],
+            str(image_msg['message_id']),
+            json_data['image_analysis']
+        )
+        json_time = time.time() - json_start
+        
+        if not json_path:
+            if show_progress:
+                print(f"      ❌ Falha ao salvar JSON após {json_time:.1f}s")
+            return {'success': False, 'error': 'JSON save failed'}
+        
+        if show_progress:
+            print(f"      ✅ JSON salvo em {json_time:.1f}s: {Path(json_path).name}")
+        
+        # 4. Salvar no diário (MongoDB)
+        if show_progress:
+            print(f"      💾 Salvando no diário...")
+        diary_start = time.time()
+        
+        # Preparar dados da análise para o diário
         analysis_data = {
             'description': result['description'],
             'prompt_used': result['prompt_used'],
@@ -271,22 +310,52 @@ def process_image_message(image_msg, download_service, db_service, image_service
             'download_time': download_time
         }
         
-        success = db_service.update_image_analysis(
+        diary_success = db_service.update_image_analysis(
             image_msg['conversation_id'],
             image_msg['contact_idx'],
             image_msg['message_idx'],
             analysis_data
         )
-        save_time = time.time() - save_start
+        diary_time = time.time() - diary_start
         
-        if success:
+        if not diary_success:
             if show_progress:
-                print(f"      ✅ Salvo no MongoDB em {save_time:.1f}s ({len(result['description'])} chars)")
-            return {'success': True, 'analysis': result}
-        else:
+                print(f"      ❌ Falha ao salvar no diário após {diary_time:.1f}s")
+            return {'success': False, 'error': 'Diary save failed'}
+        
+        if show_progress:
+            print(f"      ✅ Diário atualizado em {diary_time:.1f}s")
+        
+        # 5. Salvar na collection de análises
+        if show_progress:
+            print(f"      💾 Salvando na collection de análises...")
+        collection_start = time.time()
+        
+        # Preparar dados para a collection
+        collection_data = {
+            "mensagem_id": str(image_msg['message_id']),
+            "conversation_id": image_msg['conversation_id'],
+            "contact_name": image_msg.get('contact_name', 'Desconhecido'),
+            "image_analysis": analysis_data,
+            "image_description": result['description'],
+            "model": result['model'],
+            "device": "ollama",
+            "file_size": file_size,
+            "generation_time": result['generation_time']
+        }
+        
+        collection_success = db_service.save_image_analysis_to_collection(collection_data)
+        collection_time = time.time() - collection_start
+        
+        if not collection_success:
             if show_progress:
-                print(f"      ❌ Falha ao salvar no MongoDB após {save_time:.1f}s")
-            return {'success': False, 'error': 'Database save failed'}
+                print(f"      ❌ Falha ao salvar na collection após {collection_time:.1f}s")
+            return {'success': False, 'error': 'Collection save failed'}
+        
+        if show_progress:
+            print(f"      ✅ Collection atualizada em {collection_time:.1f}s ({len(result['description'])} chars)")
+        
+        return {'success': True, 'analysis': result}
         
     except Exception as e:
         if show_progress:

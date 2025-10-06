@@ -181,8 +181,14 @@ class DiaryAnalyzer:
         filepath = self.results_dir / filename
         
         try:
+            # Função para converter datetime para string
+            def json_serial(obj):
+                if hasattr(obj, 'isoformat'):
+                    return obj.isoformat()
+                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
+                json.dump(result, f, ensure_ascii=False, indent=2, default=json_serial)
             
             print(f"💾 Resultado salvo: {filepath}")
             return str(filepath)
@@ -215,6 +221,26 @@ class DiaryAnalyzer:
         print(f"   Mensagens de áudio: {stats.get('total_audio_messages', 0)}")
         print(f"   Mensagens de texto: {stats.get('total_text_messages', 0)}")
         print(f"   % de áudios: {stats.get('overall_audio_percentage', 0):.1f}%")
+        
+        # Informações sobre transcrições e contexto
+        raw_data = result.get('raw_data', {})
+        historical_context = raw_data.get('historical_context', [])
+        
+        print(f"\n🔍 CONTEXTO E TRANSCRIÇÕES:")
+        print(f"   Mensagens históricas (7 dias): {len(historical_context)}")
+        
+        # Contar tipos de mensagem
+        audio_transcribed = 0
+        image_analyzed = 0
+        for contact in raw_data.get('contacts', []):
+            for message in contact.get('messages', []):
+                if message.get('has_transcription'):
+                    audio_transcribed += 1
+                if message.get('has_image_analysis'):
+                    image_analyzed += 1
+        
+        print(f"   Áudios transcritos: {audio_transcribed}")
+        print(f"   Imagens analisadas: {image_analyzed}")
         
         # Análise
         analysis = result.get('analysis', {})

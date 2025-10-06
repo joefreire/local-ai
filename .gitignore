@@ -52,4 +52,5 @@ Thumbs.db
 transcriptions/*
 testes/results/*
 models/*
-image_analysis_20251004_100912.json
+analyses_results/*
+analyses_results_v2/*

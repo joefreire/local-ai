@@ -38,7 +38,7 @@ def process_single_image(image_path: str, prompt: str = None, save_json: bool = 
         
         # Prompt padrão se não fornecido
         if not prompt:
-            prompt = "Descreva esta imagem em detalhes em português, incluindo objetos, pessoas, cenário e atividades visíveis."
+            prompt = "Esta é uma captura de tela. Descreva o conteúdo visível em português."
         
         print(f"📁 Analisando: {Path(image_path).name}")
         print(f"💬 Prompt: {prompt}")
@@ -128,7 +128,7 @@ def process_image_batch(image_dir: str, prompt: str = None, limit: int = None):
         
         # Prompt padrão se não fornecido
         if not prompt:
-            prompt = "Descreva esta imagem em detalhes em português, incluindo objetos, pessoas, cenário e atividades visíveis."
+            prompt = "Esta é uma captura de tela. Descreva o conteúdo visível em português."
         
         print(f"💬 Prompt: {prompt}")
         print("-" * 50)

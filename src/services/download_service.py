@@ -170,12 +170,20 @@ class DownloadService(BaseService):
     
     def _download_from_url(self, url: str, file_path: Path):
         """Baixar arquivo de URL"""
-        response = self.session.get(url, stream=True, timeout=Config.AUDIO_DOWNLOAD_TIMEOUT)
-        response.raise_for_status()
-        
-        with open(file_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        try:
+            response = self.session.get(url, stream=True, timeout=Config.AUDIO_DOWNLOAD_TIMEOUT)
+            response.raise_for_status()
+            
+            with open(file_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                raise FileNotFoundError(f"404 Client Error: Not Found for url: {url}")
+            else:
+                raise
+        except requests.exceptions.RequestException as e:
+            raise ConnectionError(f"Erro de conexão: {e}")
     
     def _copy_local_file(self, source_path: str, dest_path: Path):
         """Copiar arquivo local"""

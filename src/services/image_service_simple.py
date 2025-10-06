@@ -80,11 +80,25 @@ class ImageServiceSimple(BaseService):
             self.logger.error(f"Erro ao codificar imagem: {e}")
             return None
     
-    def analyze_image(self, image_path: str, prompt: str = "Descreva esta imagem em detalhes em português") -> Optional[Dict]:
-        """Analisar e descrever uma imagem usando Ollama"""
+    def analyze_image(self, image_path: str, prompt: str = None) -> Optional[Dict]:
+        """Analisar e descrever uma imagem usando múltiplos prompts com validação"""
         self._ensure_initialized()
         self._log_operation("análise de imagem", {"image_path": image_path, "prompt": prompt})
         
+        try:
+            # Se prompt específico fornecido, usar apenas ele
+            if prompt:
+                return self._analyze_with_single_prompt(image_path, prompt)
+            
+            # Caso contrário, usar sistema de múltiplos prompts
+            return self._analyze_with_multiple_prompts(image_path)
+            
+        except Exception as e:
+            self._log_error("análise de imagem", e)
+            return None
+    
+    def _analyze_with_single_prompt(self, image_path: str, prompt: str) -> Optional[Dict]:
+        """Analisar imagem com um prompt específico"""
         try:
             # Codificar imagem
             img_base64 = self._encode_image_to_base64(image_path)
@@ -143,10 +157,115 @@ class ImageServiceSimple(BaseService):
             return result
             
         except Exception as e:
-            self._log_error("análise de imagem", e)
+            self._log_error("análise com prompt único", e)
             return None
     
-    def analyze_image_batch(self, image_paths: List[str], prompt: str = "Descreva esta imagem em detalhes em português") -> List[Optional[Dict]]:
+    def _analyze_with_multiple_prompts(self, image_path: str) -> Optional[Dict]:
+        """Analisar imagem com múltiplos prompts e validação"""
+        try:
+            # Lista de prompts para diferentes cenários
+            prompts = [
+                {
+                    "name": "Detalhado Geral",
+                    "prompt": "Analise esta imagem em detalhes e descreva tudo que você vê em português. Inclua: objetos, pessoas, ambiente, cores, texturas, atividades, texto visível, e contexto geral. Seja específico e descritivo.",
+                    "weight": 1.0
+                },
+                {
+                    "name": "Captura de Tela",
+                    "prompt": "Esta é uma captura de tela. Descreva o conteúdo visível em português, incluindo interface, botões, texto, menus e funcionalidades visíveis.",
+                    "weight": 0.8
+                },
+                {
+                    "name": "Documento/Recibo",
+                    "prompt": "Analise este documento ou recibo e descreva todas as informações visíveis em português. Inclua valores, datas, nomes, códigos e qualquer texto presente.",
+                    "weight": 0.7
+                },
+                {
+                    "name": "Foto Pessoal",
+                    "prompt": "Descreva esta foto em português, incluindo pessoas, ambiente, objetos, atividades e contexto geral. Seja respeitoso e objetivo.",
+                    "weight": 0.6
+                },
+                {
+                    "name": "Simples Direto",
+                    "prompt": "O que você vê nesta imagem? Descreva em português de forma clara e objetiva.",
+                    "weight": 0.5
+                }
+            ]
+            
+            results = []
+            
+            # Testar cada prompt
+            for prompt_info in prompts:
+                self.logger.info(f"Testando prompt: {prompt_info['name']}")
+                
+                result = self._analyze_with_single_prompt(image_path, prompt_info['prompt'])
+                
+                if result:
+                    # Verificar se é uma resposta válida (não recusa)
+                    if self._is_valid_response(result['description']):
+                        result['prompt_name'] = prompt_info['name']
+                        result['prompt_weight'] = prompt_info['weight']
+                        results.append(result)
+                        self.logger.info(f"✅ Prompt '{prompt_info['name']}' funcionou: {len(result['description'])} chars")
+                    else:
+                        self.logger.info(f"⚠️ Prompt '{prompt_info['name']}' recusado: {result['description'][:50]}...")
+                else:
+                    self.logger.info(f"❌ Prompt '{prompt_info['name']}' falhou")
+            
+            # Se nenhum prompt funcionou, usar o mais simples
+            if not results:
+                self.logger.warning("Nenhum prompt funcionou, usando prompt de fallback")
+                fallback_result = self._analyze_with_single_prompt(
+                    image_path, 
+                    "Descreva esta imagem em português."
+                )
+                if fallback_result:
+                    fallback_result['prompt_name'] = 'Fallback'
+                    fallback_result['prompt_weight'] = 0.1
+                    results.append(fallback_result)
+            
+            # Escolher o melhor resultado
+            if results:
+                # Ordenar por peso e tamanho da descrição
+                best_result = max(results, key=lambda x: (x['prompt_weight'], len(x['description'])))
+                
+                self.logger.info(f"Melhor resultado: {best_result['prompt_name']} ({len(best_result['description'])} chars)")
+                
+                return best_result
+            
+            return None
+            
+        except Exception as e:
+            self._log_error("análise com múltiplos prompts", e)
+            return None
+    
+    def _is_valid_response(self, description: str) -> bool:
+        """Verificar se a resposta é válida (não é uma recusa)"""
+        if not description or len(description.strip()) < 10:
+            return False
+        
+        # Palavras que indicam recusa
+        refusal_keywords = [
+            "desculpe", "não posso", "não consigo", "não posso fornecer",
+            "não posso analisar", "não posso descrever", "não posso ver",
+            "imagem não está", "imagem parece", "imagem está ausente",
+            "não consigo ver", "não consigo analisar", "não consigo descrever",
+            "não posso ajudar", "não posso processar", "não posso identificar"
+        ]
+        
+        description_lower = description.lower()
+        
+        # Se contém palavras de recusa, é inválida
+        if any(keyword in description_lower for keyword in refusal_keywords):
+            return False
+        
+        # Se é muito curta, provavelmente é inválida
+        if len(description.strip()) < 20:
+            return False
+        
+        return True
+    
+    def analyze_image_batch(self, image_paths: List[str], prompt: str = None) -> List[Optional[Dict]]:
         """Analisar múltiplas imagens em batch"""
         self._log_operation("análise em batch", {"image_count": len(image_paths), "prompt": prompt})
         
@@ -173,7 +292,7 @@ class ImageServiceSimple(BaseService):
         
         try:
             # Usar prompt específico para OCR
-            ocr_prompt = "Extraia todo o texto visível nesta imagem. Retorne apenas o texto encontrado, sem explicações adicionais."
+            ocr_prompt = "Identifique e transcreva todo o texto visível nesta imagem. Retorne apenas o texto encontrado, sem explicações adicionais. Se não houver texto, responda 'Nenhum texto encontrado'."
             
             result = self.analyze_image(image_path, ocr_prompt)
             

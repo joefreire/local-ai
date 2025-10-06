@@ -342,15 +342,55 @@ class AudioService(BaseService):
                 
                 # Download
                 download_start = time.time()
-                audio_path = download_service.download_audio_file(
-                    audio_msg['conversation_id'],
-                    str(audio_msg['message_id']),
-                    audio_msg['file_url']
-                )
-                download_time = time.time() - download_start
-                
-                if not audio_path:
-                    result['error'] = f"Falha no download após {download_time:.1f}s"
+                try:
+                    audio_path = download_service.download_audio_file(
+                        audio_msg['conversation_id'],
+                        str(audio_msg['message_id']),
+                        audio_msg['file_url']
+                    )
+                    download_time = time.time() - download_start
+                    
+                    if not audio_path:
+                        error_msg = f"Falha no download após {download_time:.1f}s"
+                        result['error'] = error_msg
+                        
+                        # Marcar como falha de download no MongoDB
+                        try:
+                            from .database_service import DatabaseService
+                            db_service = DatabaseService()
+                            db_service.mark_audio_download_failed(
+                                audio_msg['conversation_id'],
+                                audio_msg['contact_idx'],
+                                audio_msg['message_idx'],
+                                error_msg
+                            )
+                        except Exception as e:
+                            if show_progress:
+                                print(f"      ⚠️ Aviso: Erro ao marcar falha de download: {e}")
+                        
+                        if show_progress:
+                            print(f"      ❌ {result['error']}")
+                        return result
+                        
+                except (FileNotFoundError, ConnectionError) as e:
+                    download_time = time.time() - download_start
+                    error_msg = str(e)
+                    result['error'] = error_msg
+                    
+                    # Marcar como falha de download no MongoDB
+                    try:
+                        from .database_service import DatabaseService
+                        db_service = DatabaseService()
+                        db_service.mark_audio_download_failed(
+                            audio_msg['conversation_id'],
+                            audio_msg['contact_idx'],
+                            audio_msg['message_idx'],
+                            error_msg
+                        )
+                    except Exception as e:
+                        if show_progress:
+                            print(f"      ⚠️ Aviso: Erro ao marcar falha de download: {e}")
+                    
                     if show_progress:
                         print(f"      ❌ {result['error']}")
                     return result
