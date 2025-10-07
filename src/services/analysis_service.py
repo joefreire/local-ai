@@ -19,6 +19,15 @@ class LlamaService(BaseService):
         self.model = Config.OLLAMA_MODEL
         self._test_connection()
         
+        # Estatísticas de uso
+        self.usage_stats = {
+            "total_requests": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_time": 0.0,
+            "start_time": time.time()
+        }
+        
         # System prompt para análise comercial
         self.system_prompt = """Você é um especialista em análise comercial e atendimento ao cliente. Sua função é analisar conversas do WhatsApp Business para extrair insights valiosos sobre:
 
@@ -599,14 +608,23 @@ Responda APENAS com o JSON:
         }
     
     def _call_ollama(self, prompt: str, max_retries: int = 3, system_prompt: str = None) -> str:
-        """Chamar API do Ollama"""
+        """Chamar API do Ollama com estatísticas detalhadas"""
+        start_time = time.time()
+        
+        # Calcular estatísticas do prompt
+        prompt_tokens = len(prompt.split())  # Aproximação simples
+        system_tokens = len(system_prompt.split()) if system_prompt else 0
+        total_input_tokens = prompt_tokens + system_tokens
+        
         payload = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,
-                "top_p": 0.9
+                "temperature": 0.4,
+                "top_p": 0.9,
+                "repeat_penalty": 1.15,
+                "num_predict": 1536
             }
         }
         
@@ -616,6 +634,9 @@ Responda APENAS com o JSON:
         
         for attempt in range(max_retries):
             try:
+                self.logger.debug(f"🔄 Chamada Ollama - Tentativa {attempt + 1}")
+                self.logger.debug(f"📊 Input: {total_input_tokens} tokens (prompt: {prompt_tokens}, system: {system_tokens})")
+                
                 response = requests.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
@@ -624,15 +645,94 @@ Responda APENAS com o JSON:
                 response.raise_for_status()
                 
                 result = response.json()
-                return result.get('response', '').strip()
+                response_text = result.get('response', '').strip()
+                
+                # Calcular estatísticas da resposta
+                end_time = time.time()
+                duration = end_time - start_time
+                output_tokens = len(response_text.split())  # Aproximação simples
+                tokens_per_second = output_tokens / duration if duration > 0 else 0
+                
+                # Atualizar estatísticas globais
+                self.usage_stats["total_requests"] += 1
+                self.usage_stats["total_input_tokens"] += total_input_tokens
+                self.usage_stats["total_output_tokens"] += output_tokens
+                self.usage_stats["total_time"] += duration
+                
+                # Log detalhado das estatísticas
+                self.logger.info(f"✅ Ollama Response - {duration:.2f}s")
+                self.logger.info(f"📊 Tokens: {total_input_tokens} → {output_tokens} (total: {total_input_tokens + output_tokens})")
+                self.logger.info(f"⚡ Velocidade: {tokens_per_second:.2f} tokens/s")
+                self.logger.info(f"🎯 Modelo: {self.model}")
+                
+                # Log de estatísticas acumuladas
+                total_tokens = self.usage_stats["total_input_tokens"] + self.usage_stats["total_output_tokens"]
+                avg_speed = total_tokens / self.usage_stats["total_time"] if self.usage_stats["total_time"] > 0 else 0
+                self.logger.info(f"📈 ACUMULADO: {self.usage_stats['total_requests']} requests, {total_tokens} tokens, {avg_speed:.2f} tokens/s médio")
+                
+                # Log de performance
+                if duration > 30:
+                    self.logger.warning(f"⚠️  Resposta lenta: {duration:.2f}s")
+                elif duration < 5:
+                    self.logger.info(f"🚀 Resposta rápida: {duration:.2f}s")
+                
+                return response_text
                 
             except Exception as e:
                 if attempt == max_retries - 1:
+                    self.logger.error(f"❌ Falha final após {max_retries} tentativas: {e}")
                     raise e
-                self.logger.warning(f"Tentativa {attempt + 1} falhou, tentando novamente: {e}")
+                self.logger.warning(f"⚠️  Tentativa {attempt + 1} falhou, tentando novamente: {e}")
                 time.sleep(2 ** attempt)
         
         return ""
+    
+    def get_usage_stats(self) -> Dict:
+        """Obter estatísticas de uso do Ollama"""
+        # Garantir que usage_stats existe
+        if not hasattr(self, 'usage_stats'):
+            self.usage_stats = {
+                "total_requests": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_time": 0.0,
+                "start_time": time.time()
+            }
+        
+        uptime = time.time() - self.usage_stats["start_time"]
+        total_tokens = self.usage_stats["total_input_tokens"] + self.usage_stats["total_output_tokens"]
+        
+        return {
+            "model": self.model,
+            "total_requests": self.usage_stats["total_requests"],
+            "total_input_tokens": self.usage_stats["total_input_tokens"],
+            "total_output_tokens": self.usage_stats["total_output_tokens"],
+            "total_tokens": total_tokens,
+            "total_time": self.usage_stats["total_time"],
+            "uptime": uptime,
+            "avg_tokens_per_second": total_tokens / self.usage_stats["total_time"] if self.usage_stats["total_time"] > 0 else 0,
+            "requests_per_minute": self.usage_stats["total_requests"] / (uptime / 60) if uptime > 0 else 0,
+            "avg_response_time": self.usage_stats["total_time"] / self.usage_stats["total_requests"] if self.usage_stats["total_requests"] > 0 else 0
+        }
+    
+    def print_usage_stats(self):
+        """Imprimir estatísticas de uso"""
+        stats = self.get_usage_stats()
+        
+        print("\n" + "=" * 60)
+        print("📊 ESTATÍSTICAS DE USO DO OLLAMA")
+        print("=" * 60)
+        print(f"🤖 Modelo: {stats['model']}")
+        print(f"📈 Requests: {stats['total_requests']}")
+        print(f"📥 Input Tokens: {stats['total_input_tokens']:,}")
+        print(f"📤 Output Tokens: {stats['total_output_tokens']:,}")
+        print(f"🎯 Total Tokens: {stats['total_tokens']:,}")
+        print(f"⏱️  Tempo Total: {stats['total_time']:.2f}s")
+        print(f"🚀 Velocidade Média: {stats['avg_tokens_per_second']:.2f} tokens/s")
+        print(f"📊 Requests/min: {stats['requests_per_minute']:.2f}")
+        print(f"⚡ Tempo Médio/Request: {stats['avg_response_time']:.2f}s")
+        print(f"🕐 Uptime: {stats['uptime']:.2f}s")
+        print("=" * 60)
     
     def _analyze_contact(self, contact: Dict, diary_data: Dict, contact_idx: int) -> Optional[Dict]:
         """Analisar conversa individual de um contato"""
@@ -1134,7 +1234,7 @@ DADOS DO FUNCIONÁRIO:
 - Total de clientes atendidos: {len(contact_analyses)}
 
 PROPÓSITO DA ANÁLISE:
-Gerar um relatório executivo para:
+Gerar um relatório executivo estruturado para:
 1. Avaliar performance comercial do funcionário
 2. Identificar oportunidades de melhoria
 3. Destacar pontos fortes e fracos
@@ -1154,27 +1254,113 @@ INSTRUÇÕES ESPECÍFICAS:
 - Forneça feedback construtivo e acionável
 - Foque em insights comerciais práticos
 
-Relatório Executivo do Dia:
+FORMATO DE RESPOSTA OBRIGATÓRIO (JSON):
+{{
+  "executive_summary": "Resumo executivo geral do desempenho do dia",
+  "key_insights": [
+    "Insight 1 sobre padrões comerciais identificados",
+    "Insight 2 sobre comportamento do funcionário",
+    "Insight 3 sobre oportunidades de negócio"
+  ],
+  "improvements": [
+    "Melhoria 1 específica e acionável",
+    "Melhoria 2 com foco em vendas/atendimento",
+    "Melhoria 3 para desenvolvimento profissional"
+  ],
+  "feedback": {{
+    "strengths": ["Ponto forte 1", "Ponto forte 2"],
+    "weaknesses": ["Ponto de melhoria 1", "Ponto de melhoria 2"],
+    "recommendations": ["Recomendação 1", "Recomendação 2"]
+  }},
+  "commercial_metrics": {{
+    "customer_satisfaction": "alta/média/baixa",
+    "sales_effectiveness": "alta/média/baixa",
+    "communication_quality": "alta/média/baixa"
+  }},
+  "next_actions": [
+    "Ação imediata 1 para implementar",
+    "Ação de médio prazo 2",
+    "Ação de longo prazo 3"
+  ]
+}}
+
+Responda APENAS com o JSON válido:
 """
         
         try:
             response = self._call_ollama(prompt, system_prompt=self.system_prompt)
-            return {
-                "result": response.strip(),
-                "prompt": prompt,
-                "success": True,
-                "consolidated_data": {
-                    "total_contacts": len(contact_analyses),
-                    "successful_analyses": len(successful_analyses),
-                    "unique_topics": list(set(all_topics)),
-                    "sentiment_summary": self._calculate_sentiment_summary(all_sentiments),
-                    "key_insights": list(set(all_insights))[:5]
+            
+            # Tentar extrair JSON estruturado
+            try:
+                structured_data = json.loads(response.strip())
+                
+                # Validar campos obrigatórios
+                required_fields = ['executive_summary', 'key_insights', 'improvements', 'feedback']
+                if all(field in structured_data for field in required_fields):
+                    return {
+                        "result": structured_data.get('executive_summary', ''),
+                        "key_insights": structured_data.get('key_insights', []),
+                        "improvements": structured_data.get('improvements', []),
+                        "feedback": structured_data.get('feedback', {}),
+                        "commercial_metrics": structured_data.get('commercial_metrics', {}),
+                        "next_actions": structured_data.get('next_actions', []),
+                        "prompt": prompt,
+                        "success": True,
+                        "consolidated_data": {
+                            "total_contacts": len(contact_analyses),
+                            "successful_analyses": len(successful_analyses),
+                            "unique_topics": list(set(all_topics)),
+                            "sentiment_summary": self._calculate_sentiment_summary(all_sentiments),
+                            "raw_insights": list(set(all_insights))[:5]
+                        }
+                    }
+                else:
+                    # Fallback se JSON estiver incompleto
+                    return {
+                        "result": response.strip(),
+                        "key_insights": [],
+                        "improvements": [],
+                        "feedback": {},
+                        "commercial_metrics": {},
+                        "next_actions": [],
+                        "prompt": prompt,
+                        "success": True,
+                        "consolidated_data": {
+                            "total_contacts": len(contact_analyses),
+                            "successful_analyses": len(successful_analyses),
+                            "unique_topics": list(set(all_topics)),
+                            "sentiment_summary": self._calculate_sentiment_summary(all_sentiments),
+                            "raw_insights": list(set(all_insights))[:5]
+                        }
+                    }
+            except json.JSONDecodeError:
+                # Fallback se não conseguir fazer parse do JSON
+                return {
+                    "result": response.strip(),
+                    "key_insights": [],
+                    "improvements": [],
+                    "feedback": {},
+                    "commercial_metrics": {},
+                    "next_actions": [],
+                    "prompt": prompt,
+                    "success": True,
+                    "consolidated_data": {
+                        "total_contacts": len(contact_analyses),
+                        "successful_analyses": len(successful_analyses),
+                        "unique_topics": list(set(all_topics)),
+                        "sentiment_summary": self._calculate_sentiment_summary(all_sentiments),
+                        "raw_insights": list(set(all_insights))[:5]
+                    }
                 }
-            }
         except Exception as e:
             self.logger.error(f"Erro ao gerar resumo global: {e}")
             return {
                 "result": "Erro ao gerar resumo global do diário",
+                "key_insights": [],
+                "improvements": [],
+                "feedback": {},
+                "commercial_metrics": {},
+                "next_actions": [],
                 "prompt": prompt,
                 "success": False,
                 "error": str(e)
@@ -1278,8 +1464,10 @@ Relatório Executivo do Dia:
                 "prompt": text,
                 "stream": False,
                 "options": {
-                    "temperature": 0.7,
-                    "top_p": 0.9
+                    "temperature": 0.4,
+                    "top_p": 0.9,
+                    "repeat_penalty": 1.15,
+                    "num_predict": 1536
                 }
             }
             

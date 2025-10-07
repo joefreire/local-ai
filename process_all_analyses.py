@@ -281,16 +281,15 @@ def process_all_diaries_analysis_v2(limit=None, dry_run=False, force=False, cont
         print(f"📁 Resultados salvos em: {results_dir}")
         
         # Limpeza
-        analysis_service.close()
         db_service.close()
         
-        return total_failed == 0
+        return total_failed == 0, analysis_service
         
     except Exception as e:
         print(f"❌ Erro geral: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        return False, None
 
 def create_analysis_result_v2(diary_id: str, diary_data: dict, analysis: dict, contact_name: str = None):
     """Criar resultado completo da análise v2"""
@@ -400,7 +399,7 @@ def main():
     
     print()
     
-    success = process_all_diaries_analysis_v2(
+    success, analysis_service = process_all_diaries_analysis_v2(
         limit=args.limit,
         dry_run=args.dry_run,
         force=args.force,
@@ -409,6 +408,14 @@ def main():
     
     if success:
         print("\n✅ Análise v2 concluída com sucesso!")
+        
+        # Mostrar estatísticas de uso do Ollama
+        if analysis_service:
+            try:
+                analysis_service.print_usage_stats()
+            except Exception as e:
+                print(f"⚠️  Erro ao obter estatísticas: {e}")
+        
         return 0
     else:
         print("\n❌ Análise v2 concluída com erros")
